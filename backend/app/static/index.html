@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>No-Parking Monitor</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--ink:#1c2230;--mute:#667085;--line:#e2e5ea;--accent:#2457d6;--ok:#13795b;--warn:#b25e09;--bad:#c0262d;--okbg:#e5f5ef;--warnbg:#fdf0dc;--badbg:#fbe6e7;--nbg:#eceff4}
+@media (prefers-color-scheme:dark){:root{--bg:#10141b;--card:#181e28;--ink:#e8ebf1;--mute:#97a0b0;--line:#2a3240;--accent:#6c97ff;--ok:#4cc9a0;--warn:#f0a84a;--bad:#ff7a80;--okbg:#10332a;--warnbg:#3a2a10;--badbg:#3c1a1d;--nbg:#232b38}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,Segoe UI,sans-serif}
+header{display:flex;align-items:center;gap:16px;padding:12px 16px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+header h1{font-size:16px;margin:0 8px 0 0}
+nav{display:flex;gap:4px;flex-wrap:wrap;flex:1}
+nav a{padding:7px 12px;border-radius:8px;color:var(--mute);text-decoration:none;font-weight:500;cursor:pointer}
+nav a.on{background:var(--nbg);color:var(--ink)}
+nav .badge{background:var(--bad);color:#fff;border-radius:10px;font-size:11px;padding:1px 6px;margin-left:4px}
+main{max-width:1100px;margin:0 auto;padding:16px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px}
+.stat .n{font-size:30px;font-weight:650}.stat .l{color:var(--mute);font-size:13px}
+h2{font-size:17px;margin:20px 0 10px}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{color:var(--mute);font-weight:500;font-size:12.5px}
+.tw{overflow-x:auto}
+.pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600;background:var(--nbg);color:var(--mute);white-space:nowrap}
+.pill.ok{background:var(--okbg);color:var(--ok)}.pill.warn{background:var(--warnbg);color:var(--warn)}.pill.bad{background:var(--badbg);color:var(--bad)}
+.plate{font:600 15px ui-monospace,Consolas,monospace;letter-spacing:.5px}
+button,input,select{font:inherit;color:inherit}
+button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:600}
+button.sec{background:var(--nbg);color:var(--ink)}button.danger{background:var(--bad)}
+button:disabled{opacity:.5;cursor:default}
+input[type=text],input[type=password],input[type=email],input[type=tel]{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%}
+label{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}.row>div{flex:1;min-width:150px}
+.bar{height:8px;border-radius:5px;background:var(--nbg);overflow:hidden;min-width:90px}.bar i{display:block;height:100%;background:var(--accent)}.bar i.over{background:var(--bad)}
+a{color:var(--accent)}
+.mute{color:var(--mute)}.err{color:var(--bad);margin-top:8px}.msg{color:var(--ok);margin-top:8px}
+.rv{display:grid;grid-template-columns:minmax(220px,360px) 1fr;gap:16px}@media(max-width:640px){.rv{grid-template-columns:1fr}}
+.rv img{width:100%;border-radius:8px;border:1px solid var(--line);background:var(--nbg);min-height:80px}
+.login{max-width:360px;margin:12vh auto}
+.empty{color:var(--mute);padding:18px 4px}
+.camwrap{position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:4/3;max-width:720px;margin:0 auto}.camwrap img{width:100%;height:100%;object-fit:contain;display:block}
+.camov{position:absolute;left:10px;top:10px;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:700;background:rgba(0,0,0,.6);color:#fff}.camov.alert{background:var(--bad)}
+.camerr{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;text-align:center;padding:20px;background:rgba(0,0,0,.55)}
+.note{font-size:13px;color:var(--mute);background:var(--nbg);border-radius:8px;padding:8px 10px;margin:8px 0}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+"use strict";
+const $app = document.getElementById("app");
+let THRESH = 900;
+let token = sessionStorage.getItem("tok") || "", view = "overview", timer = null, settings = {};
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = t => t ? new Date(t).toLocaleString([], {day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "–";
+const mmss = s => { s = Math.max(0, Math.floor(s)); return Math.floor(s/60) + ":" + String(s%60).padStart(2,"0"); };
+
+async function api(path, opt = {}) {
+  const r = await fetch("/api/v1" + path, {...opt, headers: {"Content-Type":"application/json", ...(token?{Authorization:"Bearer "+token}:{}), ...(opt.headers||{})}});
+  if (r.status === 401 && path !== "/auth/login") { logout(); throw new Error("Signed out"); }
+  if (r.status === 204) return null;
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const d = body.detail;
+    throw new Error(Array.isArray(d) ? d.map(x => (x.msg||"").replace(/^Value error, /,"")).join("; ") : (d || "Request failed ("+r.status+")"));
+  }
+  return body;
+}
+function logout(){ token=""; sessionStorage.removeItem("tok"); clearInterval(timer); renderLogin(); }
+
+// ---------------------------------------------------------------- login
+function renderLogin(msg="") {
+  $app.innerHTML = `<div class="card login"><h1 style="font-size:20px;margin-top:0">No-Parking Monitor</h1>
+  <form id="f"><label for="em">Username</label><input id="em" type="text" autocomplete="username" required value="varni">
+  <label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password" required>
+  <div class="err" id="er">${esc(msg)}</div><p><button type="submit" style="width:100%">Sign in</button></p></form></div>`;
+  document.getElementById("f").onsubmit = async e => {
+    e.preventDefault();
+    try { const r = await api("/auth/login",{method:"POST",body:JSON.stringify({email:em.value,password:pw.value})});
+      token=r.access_token; sessionStorage.setItem("tok",token); start(); }
+    catch(x){ document.getElementById("er").textContent = x.message; }
+  };
+}
+
+// ---------------------------------------------------------------- shell
+const VIEWS = [["overview","Overview"],["cam","Cam"],["review","Review"],["sessions","Sessions"],["violations","Violations"],["notifications","Messages"],["vehicles","Vehicles"],["activity","Activity"],["system","System"]];
+function shell() {
+  $app.innerHTML = `<header><h1>No-Parking Monitor</h1><nav id="nav"></nav><button class="sec" id="out">Sign out</button></header><main id="main"></main>`;
+  document.getElementById("out").onclick = logout;
+  drawNav();
+}
+function drawNav(counts={}) {
+  document.getElementById("nav").innerHTML = VIEWS.map(([k,l]) =>
+    `<a data-v="${k}" class="${k===view?"on":""}">${l}${k==="review"&&counts.review_queue?`<span class="badge">${counts.review_queue}</span>`:""}</a>`).join("");
+  document.querySelectorAll("#nav a").forEach(a => a.onclick = () => { view=a.dataset.v; camLoopId++; drawNav(counts); load(); });
+}
+async function start() {
+  shell(); settings = await api("/settings").catch(()=>({})); THRESH = settings.violation_threshold_seconds || 900;
+  if (settings.demo_mode) document.querySelector("header").insertAdjacentHTML("afterend", `<div style="background:var(--warnbg);color:var(--warn);padding:8px 16px;font-weight:600;text-align:center">DEMO MODE: violation limit is ${settings.violation_threshold_seconds} seconds (the real rule is 15 minutes)</div>`);
+  await load(); clearInterval(timer); timer = setInterval(() => { if (!document.hidden && !busyEditing()) load(true); }, 5000);
+}
+const busyEditing = () => view==="review" && (document.activeElement?.tagName==="INPUT") || view==="vehicles" && document.activeElement?.tagName==="INPUT" || view==="system" && document.activeElement?.tagName==="INPUT";
+let lastViol = null;
+async function watchViolations(d) {
+  if (lastViol === null) { lastViol = d.violations_total; return; }
+  if (d.violations_total <= lastViol) return;
+  lastViol = d.violations_total;
+  const v = (await api("/violations?limit=1"))[0]; if (!v) return;
+  document.getElementById("vbanner")?.remove();
+  document.querySelector("header").insertAdjacentHTML("afterend", `<div id="vbanner" style="background:var(--bad);color:#fff;padding:12px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-weight:600">
+    <span>NEW VIOLATION: <span class="plate">${esc(v.plate)}</span> (${v.registered?"registered":"unregistered"}) stayed ${mmss(v.elapsed_seconds)}</span>
+    <button class="sec" id="vbview">View</button><button class="sec" id="vbx">Dismiss</button></div>`);
+  document.getElementById("vbview").onclick = () => { view = "violations"; camLoopId++; document.getElementById("vbanner")?.remove(); load(); };
+  document.getElementById("vbx").onclick = () => document.getElementById("vbanner")?.remove();
+  const t0 = document.title; document.title = "Violation: " + v.plate; setTimeout(() => document.title = t0, 15000);
+}
+async function load(quiet) {
+  try { const d = await api("/dashboard"); drawNav(d); await watchViolations(d); await RENDER[view](d, quiet); }
+  catch (e) { if (e.message !== "Signed out") document.getElementById("main").innerHTML = `<div class="card err">Cannot reach the server: ${esc(e.message)}</div>`; }
+}
+const main = h => document.getElementById("main").innerHTML = h;
+const pill = (t, cls) => `<span class="pill ${cls||""}">${esc(t)}</span>`;
+const notifCls = s => ({SUBMITTED:"ok",DELIVERED:"ok",SHOWN:"",PENDING:"warn",LEASED:"warn",RETRYING:"warn",FAILED:"bad",UNCERTAIN:"bad",CANCELLED:""}[s]||"");
+const NOTIF_HELP = "SUBMITTED = the phone network accepted the message. It does NOT prove the phone received it. DELIVERED is only shown when a delivery report arrives. UNCERTAIN = the device never confirmed; it is not resent automatically.";
+
+// ---------------------------------------------------------------- views
+function sessionRows(list) {
+  if (!list.length) return `<div class="empty">No parked vehicles right now.</div>`;
+  return `<div class="tw"><table><tr><th>Plate</th><th>Registered</th><th>Since</th><th>Time parked</th><th style="width:30%">Toward limit (${mmss(THRESH)})</th></tr>` +
+    list.map(s => { const el = s.elapsed_seconds, pct = Math.min(100, el/THRESH*100);
+      return `<tr data-entry="${esc(s.entry_at)}"><td class="plate">${esc(s.plate)}</td><td>${s.registered?pill("Yes","ok"):pill("No","warn")}</td><td>${fmt(s.entry_at)}</td>
+      <td class="el">${mmss(el)}</td><td><div class="bar"><i class="${el>THRESH?"over":""}" style="width:${pct}%"></i></div>${el>THRESH?`<span class="mute"> over limit</span>`:""}</td></tr>`; }).join("") + `</table></div>`;
+}
+async function ovw(d) {
+  const [act, vio] = await Promise.all([api("/sessions?active=true"), api("/violations?limit=8")]);
+  main(`<div class="grid">
+    <div class="card stat"><div class="n">${d.active_sessions}</div><div class="l">Parked now</div></div>
+    <div class="card stat"><div class="n">${d.violations_total}</div><div class="l">Violations</div></div>
+    <div class="card stat"><div class="n">${d.review_queue}</div><div class="l">Photos to review</div></div>
+    <div class="card stat"><div class="n">${d.sms_pending}</div><div class="l">SMS waiting</div></div>
+    <div class="card stat"><div class="n" style="color:${d.sms_uncertain_or_failed?"var(--bad)":"inherit"}">${d.sms_uncertain_or_failed}</div><div class="l">SMS failed / unsure</div></div></div>
+    <h2>Parked now</h2><div class="card">${sessionRows(act)}</div>
+    <h2>Latest violations</h2><div class="card">${vioTable(vio)}</div>`);
+}
+const vioTable = v => !v.length ? `<div class="empty">No violations yet.</div>` :
+  `<div class="tw"><table><tr><th>When</th><th>Plate</th><th>Owner</th><th>Parked for</th></tr>` +
+  v.map(x => `<tr><td>${fmt(x.confirmed_at)}</td><td class="plate">${esc(x.plate)}</td><td>${x.registered?pill("Registered","ok"):pill("Unregistered","warn")}</td><td>${mmss(x.elapsed_seconds)}</td></tr>`).join("") + `</table></div>`;
+
+async function review(d, quiet) {
+  const [a, b] = await Promise.all([api("/detections?status=NEEDS_REVIEW"), api("/detections?status=PENDING_ANPR")]);
+  const list = [...a, ...b];
+  if (quiet && document.querySelector("#main .rv")) { const have = [...document.querySelectorAll("[data-det]")].map(e=>e.dataset.det).sort().join(); if (have === list.map(x=>x.id).sort().join()) return; }
+  main(`<h2 style="margin-top:0">Photos waiting for a person</h2><div class="note">Read the plate from the photo and type it. Only confirm what you can clearly read. If it isn't a plate, choose "Not a plate". The system never guesses an owner.</div>` +
+    (list.length ? list.map(x => `<div class="card rv" data-det="${esc(x.id)}"><div><img alt="Captured photo" data-img="${esc(x.image_url)}"></div><div>
+      <div>${pill(x.status==="PENDING_ANPR"?"Reading…":"Needs review", x.status==="PENDING_ANPR"?"":"warn")} <span class="mute">${fmt(x.captured_at)}</span></div>
+      <p class="mute">Machine read: <span class="plate">${esc(x.raw_text||"nothing")}</span>${x.confidence!=null?` (confidence ${(x.confidence*100).toFixed(0)}%)`:""}</p>
+      <label for="p-${esc(x.id)}">Plate number</label><input type="text" id="p-${esc(x.id)}" maxlength="14" placeholder="e.g. TN45AB1234" value="${esc(x.plate||"")}" autocomplete="off">
+      <div class="err" id="e-${esc(x.id)}"></div><p><button data-ok="${esc(x.id)}">Confirm plate</button> <button class="sec" data-no="${esc(x.id)}">Not a plate</button></p></div></div>`).join("")
+     : `<div class="card empty">Nothing to review.</div>`));
+  document.querySelectorAll("img[data-img]").forEach(async im => { try { const r = await fetch(im.dataset.img.replace(/^\/api\/v1/,"/api/v1"), {headers:{Authorization:"Bearer "+token}}); im.src = URL.createObjectURL(await r.blob()); } catch{} });
+  document.querySelectorAll("[data-ok]").forEach(b => b.onclick = async () => { const id=b.dataset.ok, er=document.getElementById("e-"+id);
+    try { const r = await api(`/detections/${id}/review`,{method:"POST",body:JSON.stringify({plate:document.getElementById("p-"+id).value})});
+      if (r.status==="NO_SESSION") alert("Plate saved, but no vehicle is currently detected in the zone, so no parking timer was started."); load(); }
+    catch(x){ er.textContent = x.message; } });
+  document.querySelectorAll("[data-no]").forEach(b => b.onclick = async () => { await api(`/detections/${b.dataset.no}/reject`,{method:"POST"}); load(); });
+}
+async function sessions() {
+  const s = await api("/sessions?limit=100");
+  main(`<h2 style="margin-top:0">Parking sessions</h2><div class="card">${!s.length?`<div class="empty">No sessions yet.</div>`:`<div class="tw"><table><tr><th>Plate</th><th>Entered</th><th>Left</th><th>Duration</th><th>Status</th></tr>` +
+   s.map(x=>`<tr><td class="plate">${esc(x.plate)}</td><td>${fmt(x.entry_at)}</td><td>${fmt(x.exit_at)}</td><td>${mmss(x.elapsed_seconds)}</td><td>${x.status==="ACTIVE"?pill("Parked","warn"):pill(({EXITED:"Left",REPLACED:"Replaced by another vehicle"})[x.close_reason]||"Closed")}</td></tr>`).join("")+`</table></div>`}</div>`);
+}
+async function violations() { main(`<h2 style="margin-top:0">Violations</h2><div class="note">A violation is created only when a vehicle stays <b>longer than</b> ${mmss(THRESH)} (minutes:seconds). This is an alert, not a fine.</div><div class="card">${vioTable(await api("/violations"))}</div>`); }
+async function notifications() {
+  const n = await api("/notifications");
+  main(`<h2 style="margin-top:0">Messages</h2><div class="note">${esc(NOTIF_HELP)}</div><div class="card">${!n.length?`<div class="empty">No messages yet.</div>`:`<div class="tw"><table><tr><th>When</th><th>Type</th><th>To</th><th>Status</th><th>Detail</th><th></th></tr>` +
+   n.map(x=>`<tr><td>${fmt(x.created_at)}</td><td>${esc(({OWNER_SMS:"Owner SMS",ADMIN_SMS:"Admin SMS",DASHBOARD:"Dashboard alert"})[x.kind]||x.kind)}</td><td>${esc(x.recipient_phone||"–")}</td>
+   <td>${pill(x.status,notifCls(x.status))}${x.attempts>1?` <span class="mute">×${x.attempts}</span>`:""}</td><td class="mute" title="${esc(x.message)}">${esc(x.modem_response||x.message).slice(0,70)}</td>
+   <td>${(["UNCERTAIN","FAILED"].includes(x.status)&&x.recipient_phone)?`<button class="sec" data-retry="${esc(x.id)}">Retry</button>`:""}</td></tr>`).join("")+`</table></div>`}</div>`);
+  document.querySelectorAll("[data-retry]").forEach(b => b.onclick = async () => { if (confirm("Send again? If the first message did arrive, the person will get a duplicate.")) { await api(`/notifications/${b.dataset.retry}/retry`,{method:"POST"}); load(); } });
+}
+let editingVeh = null;
+async function vehicles() {
+  const v = await api("/vehicles"); editingVeh = null;
+  main(`<h2 style="margin-top:0">Registered vehicles</h2><div class="note">Only vehicles listed here (with the owner's consent) can receive an owner SMS. A number plate alone never reveals a phone number.</div>
+  <form class="card" id="vf"><h3 id="vtitle" style="margin:0 0 4px;font-size:15px">Add a vehicle</h3><div class="row"><div><label for="vp">Plate</label><input type="text" id="vp" required maxlength="14" placeholder="TN45AB1234" autocomplete="off"></div>
+  <div><label for="vn">Owner name</label><input type="text" id="vn" required maxlength="120" autocomplete="off"></div>
+  <div><label for="vt">Owner phone</label><input type="tel" id="vt" required placeholder="+919876543210" autocomplete="off"></div></div>
+  <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="vc"> The owner has agreed to receive SMS alerts</label>
+  <div class="err" id="ve"></div><p><button type="submit" id="vsave">Add vehicle</button> <button type="button" class="sec" id="vcancel" hidden>Cancel edit</button></p></form>
+  <div class="card">${!v.length?`<div class="empty">No vehicles registered.</div>`:`<div class="tw"><table><tr><th>Plate</th><th>Owner</th><th>Phone</th><th>Consent</th><th>Status</th><th></th></tr>` +
+  v.map(x=>`<tr><td class="plate">${esc(x.plate)}</td><td>${esc(x.owner_name)}</td><td>${esc(x.owner_phone)}</td><td>${x.consent?pill("Yes","ok"):pill("No","bad")}</td><td>${x.active?pill("Active","ok"):pill("Inactive")}</td>
+  <td style="white-space:nowrap"><button class="sec" data-edit="${esc(x.id)}">Edit</button> ${x.active?`<button class="sec" data-del="${esc(x.id)}">Deactivate</button>`:`<button class="sec" data-react="${esc(x.id)}">Reactivate</button>`}</td></tr>`).join("")+`</table></div>`}</div>`);
+  const reset = () => { editingVeh = null; vf.reset(); vtitle.textContent = "Add a vehicle"; vsave.textContent = "Add vehicle"; vcancel.hidden = true; ve.textContent = ""; };
+  vcancel.onclick = reset;
+  document.getElementById("vf").onsubmit = async e => { e.preventDefault();
+    const body = {plate:vp.value,owner_name:vn.value,owner_phone:vt.value.trim(),consent:vc.checked};
+    try { if (editingVeh) { const cur = v.find(x => x.id === editingVeh); await api("/vehicles/"+editingVeh,{method:"PUT",body:JSON.stringify({...body,active:cur ? cur.active : true})}); }
+          else await api("/vehicles",{method:"POST",body:JSON.stringify(body)});
+      load(); }
+    catch(x){ ve.textContent = x.message; } };
+  document.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => { const x = v.find(i => i.id === b.dataset.edit); editingVeh = x.id;
+    vp.value = x.plate; vn.value = x.owner_name; vt.value = x.owner_phone; vc.checked = x.consent;
+    vtitle.textContent = "Edit vehicle " + x.plate; vsave.textContent = "Save changes"; vcancel.hidden = false; vf.scrollIntoView({behavior:"smooth"}); vp.focus(); });
+  document.querySelectorAll("[data-react]").forEach(b => b.onclick = async () => { const x = v.find(i => i.id === b.dataset.react);
+    try { await api("/vehicles/"+x.id,{method:"PUT",body:JSON.stringify({plate:x.plate,owner_name:x.owner_name,owner_phone:x.owner_phone,consent:x.consent,active:true})}); load(); } catch(e){ alert(e.message); } });
+  document.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => { if (confirm("Deactivate this vehicle? It will be treated as unregistered.")) { await api(`/vehicles/${b.dataset.del}`,{method:"DELETE"}); load(); } });
+}
+let newKey = null;
+async function system() {
+  const [s, dv, zs] = await Promise.all([api("/settings"), api("/devices"), api("/zones")]);
+  const zname = id => (zs.find(z => z.id === id) || {}).name || "?";
+  main(`<h2 style="margin-top:0">Camera units</h2>${newKey?`<div class="card" style="border-color:var(--warn)"><b>Device key for ${esc(newKey.name)} (shown only once):</b><p class="plate" style="word-break:break-all;user-select:all">${esc(newKey.key)}</p><p class="mute">Paste it into <code>DEVICE_KEY</code> in the firmware's config.h and flash the board. It cannot be shown again.</p><button class="sec" id="keyok">I have saved it</button></div>`:""}
+  <div class="card">${!dv.length?`<div class="empty">No camera units registered.</div>`:`<div class="tw"><table><tr><th>Name</th><th>Zone</th><th>Connection</th><th>Vehicle seen</th><th>Wi-Fi</th><th>Location (GPS)</th><th>Last contact</th></tr>` +
+  dv.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(zname(x.zone_id))}</td><td>${x.online?pill("Online","ok"):pill("Offline","bad")}</td><td>${x.present?pill("Present","warn"):pill("Clear")}</td><td>${x.rssi!=null?esc(x.rssi)+" dBm":"–"}</td>
+  <td>${x.gps.lat!=null?`<a target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${+x.gps.lat}&mlon=${+x.gps.lng}#map=17/${+x.gps.lat}/${+x.gps.lng}">${(+x.gps.lat).toFixed(5)}, ${(+x.gps.lng).toFixed(5)}</a> <span class="mute">(${esc(x.gps.sats??"?")} sats)</span>`:"no fix yet"}</td><td>${fmt(x.last_seen_at)}</td></tr>`).join("")+`</table></div>`}</div>
+  <h2>Zones and new camera units</h2><div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">
+  <form class="card" id="zf"><b>Add a no-parking zone</b><label for="zn">Zone name</label><input type="text" id="zn" required maxlength="120"><label for="zl">Location label (used in messages)</label><input type="text" id="zl" required maxlength="200">
+   <div class="err" id="ze"></div><p><button type="submit">Add zone</button></p></form>
+  <form class="card" id="df"><b>Register a camera unit</b><label for="dn">Unit name</label><input type="text" id="dn" required maxlength="80"><label for="dz">Zone</label><select id="dz" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--card)">${zs.map(z=>`<option value="${esc(z.id)}">${esc(z.name)}</option>`).join("")}</select>
+   <div class="err" id="de"></div><p><button type="submit" ${zs.length?"":"disabled"}>Register unit</button></p></form></div>
+  <h2>Settings</h2><form class="card" id="sf"><div class="row"><div><label for="sa">Administrator phone (gets alerts for unregistered vehicles)</label><input type="tel" id="sa" value="${esc(s.admin_phone)}" placeholder="+919876543210"></div>
+  <div><label for="sl">Site name used in messages</label><input type="text" id="sl" maxlength="100" value="${esc(s.site_label)}"></div></div>
+  <p class="mute">Violation limit: more than ${mmss(s.violation_threshold_seconds)} (min:sec; set in the server settings, not here). Sensor tolerance before a vehicle is considered gone: ${s.presence_grace_seconds} s.</p>
+  <div class="err" id="se"></div><div class="msg" id="sm"></div><p><button type="submit">Save</button></p></form>
+  <h2>Change password</h2><form class="card" id="pf"><div class="row"><div><label for="pc">Current password</label><input type="password" id="pc" required autocomplete="current-password"></div>
+  <div><label for="p1">New password (8+ characters)</label><input type="password" id="p1" required minlength="8" autocomplete="new-password"></div>
+  <div><label for="p2">Repeat new password</label><input type="password" id="p2" required minlength="8" autocomplete="new-password"></div></div>
+  <div class="err" id="pe"></div><div class="msg" id="pm"></div><p><button type="submit">Change password</button></p></form>`);
+  if (document.getElementById("keyok")) keyok.onclick = () => { newKey = null; load(); };
+  zf.onsubmit = async e => { e.preventDefault(); try { await api("/zones",{method:"POST",body:JSON.stringify({name:zn.value,site_label:zl.value})}); load(); } catch(x){ ze.textContent = x.message; } };
+  df.onsubmit = async e => { e.preventDefault(); try { const r = await api("/devices",{method:"POST",body:JSON.stringify({name:dn.value,zone_id:dz.value})}); newKey = {name:r.name,key:r.device_key}; load(); } catch(x){ de.textContent = x.message; } };
+  sf.onsubmit = async e => { e.preventDefault();
+    try { settings = await api("/settings",{method:"PUT",body:JSON.stringify({admin_phone:sa.value.trim(),site_label:sl.value})}); se.textContent=""; sm.textContent="Saved."; }
+    catch(x){ sm.textContent=""; se.textContent = x.message; } };
+  pf.onsubmit = async e => { e.preventDefault(); pm.textContent = ""; pe.textContent = "";
+    if (p1.value !== p2.value) { pe.textContent = "The two new passwords do not match."; return; }
+    try { await api("/account/password",{method:"POST",body:JSON.stringify({current_password:pc.value,new_password:p1.value})}); pf.reset(); pm.textContent = "Password changed. Use it next time you sign in."; }
+    catch(x){ pe.textContent = x.message; } };
+}
+async function activity() {
+  const a = await api("/audit?limit=200");
+  main(`<h2 style="margin-top:0">Activity log</h2><div class="note">Every change made from this dashboard, and every sign-in attempt. Passwords are never recorded.</div><div class="card">${!a.length?`<div class="empty">Nothing recorded yet.</div>`:`<div class="tw"><table><tr><th>When</th><th>Who</th><th>What</th><th>Detail</th></tr>` +
+   a.map(x=>`<tr><td>${fmt(x.at)}</td><td>${esc(x.actor)}</td><td>${x.action==="Failed sign-in"?pill(x.action,"bad"):esc(x.action)}</td><td class="mute">${esc(x.detail||"")}</td></tr>`).join("")+`</table></div>`}</div>`);
+}
+
+// ---------------------------------------------------------------- live camera
+// The backend fetches one frame from the camera per request; we loop sequentially (~1 frame/s on this sensor).
+let camLoopId = 0, camPaused = false, camPresent = false;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function cam(d, quiet) {
+  if (document.getElementById("camimg")) {  // already running: just refresh the status pill
+    try { const dv = await api("/devices"); camPresent = !!(dv[0] && dv[0].present); paintCamOverlay(); drawCaptures(); } catch {}
+    return;
+  }
+  const dv = await api("/devices"), dev = dv[0];
+  main(`<h2 style="margin-top:0">Live camera</h2>` + (!dev ? `<div class="card empty">No camera unit registered yet.</div>` :
+    `<div class="card"><div class="camwrap"><img id="camimg" alt="Live camera feed"><div class="camov" id="camov">Connecting…</div><div class="camerr" id="camerr" hidden></div></div>
+     <div class="row" style="margin-top:12px;justify-content:space-between"><div id="caminfo" class="mute">Waiting for the first frame…</div><div><button class="sec" id="camtoggle">Pause</button></div></div></div>
+     <h2>Recent photos</h2><div id="caps" class="grid" style="grid-template-columns:repeat(auto-fill,minmax(190px,1fr))"></div>
+     <div class="note">About one frame per second: this camera's sensor cannot produce JPEG itself, so the board converts each frame in software. Only this tab asks for frames, so other pages and the sensor are not affected.</div>`));
+  if (!dev) return;
+  camPaused = false; camPresent = !!dev.present; capsKey = ""; drawCaptures();
+  document.getElementById("camtoggle").onclick = e => { camPaused = !camPaused; e.target.textContent = camPaused ? "Resume" : "Pause"; if (camPaused) document.getElementById("caminfo").textContent = "Paused"; };
+  camLoop(dev.id, ++camLoopId);
+}
+let capsKey = "";
+async function drawCaptures() {
+  const box = document.getElementById("caps"); if (!box) return;
+  const list = await api("/detections?limit=8"), key = list.map(x => x.id + x.status + x.plate).join();
+  if (key === capsKey) return; capsKey = key;
+  box.innerHTML = list.length ? list.map(x => `<div class="card" style="margin:0;padding:10px"><img alt="Captured photo" data-img="${esc(x.image_url)}" style="width:100%;border-radius:6px;background:var(--nbg);min-height:60px">
+    <div style="margin-top:6px">${x.plate?`<span class="plate">${esc(x.plate)}</span>`:`<span class="mute">no plate read</span>`}</div>
+    <div>${pill(({ACCEPTED:"Accepted",NEEDS_REVIEW:"Needs review",PENDING_ANPR:"Reading…",NO_SESSION:"Read, no vehicle",REJECTED:"Rejected"})[x.status]||x.status, x.status==="ACCEPTED"?"ok":(x.status==="NEEDS_REVIEW"?"warn":""))} <span class="mute">${fmt(x.captured_at)}</span></div></div>`).join("") : `<div class="empty">No photos yet.</div>`;
+  box.querySelectorAll("img[data-img]").forEach(async im => { try { const r = await fetch(im.dataset.img, {headers:{Authorization:"Bearer "+token}}); im.src = URL.createObjectURL(await r.blob()); } catch {} });
+}
+function paintCamOverlay() {
+  const o = document.getElementById("camov"); if (!o) return;
+  o.textContent = camPresent ? "VEHICLE DETECTED" : "LIVE · area clear"; o.className = "camov" + (camPresent ? " alert" : "");
+}
+async function camLoop(id, my) {
+  let errs = 0, frames = 0, t0 = Date.now();
+  while (my === camLoopId && document.getElementById("camimg")) {
+    if (document.hidden || camPaused) { await sleep(400); continue; }
+    try {
+      const r = await fetch(`/api/v1/devices/${id}/snapshot`, {headers: {Authorization: "Bearer " + token}});
+      if (r.status === 401) { logout(); return; }
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || ("error " + r.status));
+      const url = URL.createObjectURL(await r.blob()), im = document.getElementById("camimg");
+      if (my !== camLoopId || !im) { URL.revokeObjectURL(url); return; }
+      const old = im.src; im.src = url; if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+      errs = 0; frames++; document.getElementById("camerr").hidden = true; paintCamOverlay();
+      const secs = (Date.now() - t0) / 1000;
+      document.getElementById("caminfo").textContent = `Live · ${(frames / Math.max(secs, 1)).toFixed(1)} frames/s · last frame ${new Date().toLocaleTimeString()}`;
+      if (secs > 30) { frames = 0; t0 = Date.now(); }
+    } catch (e) {
+      errs++; const er = document.getElementById("camerr"); if (!er) return;
+      er.hidden = false; er.textContent = "Camera not reachable: " + e.message + " — retrying…";
+      await sleep(Math.min(5000, 1000 * errs));
+    }
+  }
+}
+const RENDER = {overview:ovw, cam, review, sessions, violations, notifications, vehicles, activity, system};
+
+// live clock for the "parked now" table (no refetch needed)
+setInterval(() => document.querySelectorAll("tr[data-entry]").forEach(r => { const el=(Date.now()-new Date(r.dataset.entry))/1000;
+  r.querySelector(".el").textContent = mmss(el); const bar=r.querySelector(".bar i"); bar.style.width=Math.min(100,el/THRESH*100)+"%"; bar.className = el>THRESH?"over":""; }), 1000);
+
+token ? start() : renderLogin();
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+backend/.env
+backend/.venv/
+backend/*.db*
+backend/storage/
+backend/server.*
+firmware/nopark_cam/config.h
+benchmark/
+capture_test.jpg
+__pycache__/
+firmware/bench_test/config.h
+*.pid
+*.log
